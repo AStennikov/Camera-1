@@ -11,6 +11,8 @@
 #include "camera.h"
 #include "clock.h"
 
+#define DEBUG
+
 #define TMRD(x) (x << 0)  /* Load Mode Register to Active */
 #define TXSR(x) (x << 4)  /* Exit Self-refresh delay */
 #define TRAS(x) (x << 8)  /* Self refresh time */
@@ -25,11 +27,15 @@ void gpio_test();
 
 void set_frame_size(int width, int height);
 
+//these set and clear test patterns
 void set_test_pattern();
+void clear_pattern();
 
 void set_shutter_speed();
 
 void take_picture(int shutter_speed_ms);
+
+int process_command(char *cmd);
 
 
 //this stores last value of snapshot button. Picture is made on falling edge.
@@ -87,78 +93,21 @@ int main(void)
 	//init 6Mhz sensor clock at PE5 (pin 4)
 	clock_init();
 
-
-
-	/*int *p = (int *) 0xa0000000;
-	*p = 42;
-
-	if (*p == 42) {
-		uart_putline(&uart, "Memory test success");
-	} else {
-		uart_putline(&uart, "Memory test fail");
-	}
-
-	for (i=0; i<100; i++){
-		//p += 1;
-		p[i] = 42;
-		//delay_ms(5);
-	}
-
-	//gpio_set(GPIO_LED_BUSY, 1);
-	//p = (int *) 0xa0000000;
-	for (i=0; i<50; i++){
-		//p += 1;
-		//delay_ms(20);
-		if (p[i] != 42) {
-			sprintf(buf, "Memory test fail at index %d. Value: %d, addr: %x", i, p[i], &p[i]);
-			uart_putline(&uart, buf);
-			//break;
-			delay_ms(2);
-		}
-	}*/
-
-	//while(1) {}
-
 	i2c_init();
 
-	//counting to 100000000 takes about 8000ms
-	for (i=0; i<100000000; ++i) {}
-
-	//sensor_set(1, 100);
-
-	for (i=0; i<1000000; ++i) {}
-
-	int chip_version = sensor_get(0);
-	sprintf(buf, "Sensor chip version %d", chip_version);
-	uart_putline(&uart, buf);
-	for (i=0; i<1000000; ++i) {}
-
-
-	//setup sensor
-	//ERS mode, bulb exposure
-	sensor_set(0x1e, 0x4146);
-
-	set_frame_size(99, 99);
-
-
-
-	for (i=0; i<100000000; ++i) {}
-
-	//set_test_pattern();
-
-	//take_picture(100);
-
-	//initialize dcmi
-	camera_init(&uart);
-	//camera_init_gpio();
+	int DCMI_init_status = camera_init(&uart);
+#ifdef DEBUG
+	if (DCMI_init_status == 0) {
+		uart_putline(&uart, "DCMI init OK");
+	} else {
+		sprintf(buf, "DCMI init status: %x", DCMI_init_status);
+		uart_putline(&uart, buf);
+	}
+#endif
 
 	int msg_counter = 0;
 
-	if (camera_test_image_array() == 0) {
-		uart_putline(&uart, "Image array ready");
-	}
-
-	//while(1) {}
+	//set_test_pattern();
 
 	while (1)
 	{
@@ -182,9 +131,11 @@ int main(void)
 			uart_putline(&uart, buf);
 			++msg_counter;
 
-			if (strcmp(msg, "start") == 0) {
-				uart_putline(&uart, msg);
-				uart_putline(&uart, "OK");
+			if (strncmp(msg, "cmd", 3) == 0) {	//this is UART command start
+				//uart_putline(&uart, msg);
+				process_command(msg);
+
+
 			} else if (strcmp(msg, "h") == 0) {
 				uart_putline(&uart, "HELP");
 				uart_putline(&uart, "Commands are entered by typing command and pressing enter");
@@ -215,6 +166,150 @@ int main(void)
 
 }
 
+//gets integer from string. Stops at first non-numeric character.
+int str_to_i(int offset, char *str) {
+	int return_value = 0;
+	while ((offset < strlen(str)) && (str[offset]>=48) && (str[offset]<=57)) {
+		return_value = return_value*10 + ((int) str[offset] - 48);
+		++offset;
+	}
+	return return_value;
+}
+
+//command syntax:
+//cmd -xxx yyy
+//where cmd is header indicating start of command frame, -xxx is command and y is argument
+//command list
+//-row xxxx 		- sets start row where xxxx is value
+//-column xxxx 		- sets start row where xxxx is value
+//-width xxxx 		- sets image width where xxxx is odd value
+//-height xxxx 		- sets image height where xxxx is odd value
+//-speed xxxx 		- sets shutter speed where xxxx is shutter speed in ms
+//-pic 				- orders camera to take picture with parameters given above
+//IMPORTANT: width is actually vertical dimension and height is horizontal. W=99 H=1 will give 1 frame and 2 lines. So max sensor width is 2005 and height 2751.
+//row and column seems correct
+int process_command(char *cmd) {
+	int offset = 4; //skipped first space and go directly to first command
+
+	int argument = 0;
+
+	while (offset < strlen(cmd)) {
+		if (cmd[offset] == '-') {	//start of command detected
+			if (strncmp(&cmd[offset+1], "row ", 4) == 0) {	//user wants to set row
+				offset += 5;
+				argument = str_to_i(offset, cmd);
+				if (camera_set_row(argument)) {
+					uart_putline(&uart, "OK");
+					sprintf(buf, "Row set to %d", argument);
+					uart_putline(&uart, buf);
+				} else {
+					uart_putline(&uart, "ERROR: UNABLE TO SET ROW");
+				}
+			} else if (strncmp(&cmd[offset+1], "column ", 7) == 0) {
+				offset += 8;
+				argument = str_to_i(offset, cmd);
+				if (camera_set_column(argument)) {
+					uart_putline(&uart, "OK");
+					sprintf(buf, "Column set to %d", argument);
+					uart_putline(&uart, buf);
+				} else {
+					uart_putline(&uart, "ERROR: UNABLE TO SET COLUMN");
+				}
+			} else if (strncmp(&cmd[offset+1], "width ", 6) == 0) {
+				offset += 7;
+				argument = str_to_i(offset, cmd);
+				if (camera_set_width(argument)) {
+					uart_putline(&uart, "OK");
+					sprintf(buf, "Width set to %d", argument);
+					uart_putline(&uart, buf);
+				} else {
+					uart_putline(&uart, "ERROR: UNABLE TO SET WIDTH");
+				}
+			} else if (strncmp(&cmd[offset+1], "height ", 7) == 0) {
+				offset += 8;
+				argument = str_to_i(offset, cmd);
+				if (camera_set_height(argument)) {
+					uart_putline(&uart, "OK");
+					sprintf(buf, "Height set to %d", argument);
+					uart_putline(&uart, buf);
+				} else {
+					uart_putline(&uart, "ERROR: UNABLE TO SET HEIGHT");
+				}
+			} else if (strncmp(&cmd[offset+1], "speed ", 6) == 0) {
+				offset += 7;
+				argument = str_to_i(offset, cmd);
+				if (camera_set_shutter_speed(argument)) {
+					uart_putline(&uart, "OK");
+					sprintf(buf, "Shutter speed set to %d", argument);
+					uart_putline(&uart, buf);
+				}
+			} else if (strncmp(&cmd[offset+1], "barpattern", 10) == 0) {
+				set_test_pattern();
+				uart_putline(&uart, "Bar pattern set");
+			} else if (strncmp(&cmd[offset+1], "nopattern", 9) == 0) {
+				clear_pattern();
+				uart_putline(&uart, "Pattern cleared");
+			} else if (strncmp(&cmd[offset+1], "pic", 3) == 0) {
+				uart_putline(&uart, "Taking picture");
+				camera_take_picture();
+				uart_putline(&uart, "DONE");
+			} else if (strncmp(&cmd[offset+1], "getdata", 7) == 0) {
+
+				//get rggb values for every pixel.
+				int column = 0, row = 0;
+				int array_width = (camera_frame_width()+1)/2;	//indicates how much array elements are in one line (since 2 pixels got into 1 integer)
+				int array_height = camera_frame_height();		//indicates how many lines we have.
+				int red = 0, green1 = 0, green2 = 0, blue = 0;	//these stor pixel values
+
+				/*sprintf(buf, "width: %d", camera_frame_width());
+				uart_putline(&uart, buf);
+				sprintf(buf, "height: %d", camera_frame_height());
+				uart_putline(&uart, buf);
+				sprintf(buf, "array_width: %d", array_width);
+				uart_putline(&uart, buf);
+				sprintf(buf, "array_height: %d", array_height);
+				uart_putline(&uart, buf);*/
+				int i=0;
+				for (row=0; row<array_height; row+=2) {		//scan every second row
+					for (column=0; column<array_width; ++column) {	//scan every array element in row
+						//even row, contains red and green1 data
+						green1 = image[row*array_width + column] & 0x0000ffff;
+						red = (image[row*array_width + column]>>16) & 0x0000ffff;
+						//odd row, contains green2 and blue data
+						blue = image[(row+1)*array_width + column] & 0x0000ffff;
+						green2 = (image[(row+1)*array_width + column]>>16) & 0x0000ffff;
+
+						//wait until previous data is sent
+						while (uart_outbox_not_empty(&uart)) {}
+
+						//compose frame and transmit
+						//sprintf(buf, "r:%d c:%d data1:%x r:%d c:%d data2:%x %x,%x,%x,%x;", row, column, image[row*array_width + column], row+1, column, image[(row+1)*array_width + column], red, green1, green2, blue);
+						sprintf(buf, "%d,%d,%d,%d;", red, green1, green2, blue);
+						uart_putline(&uart, buf);
+						delay_ms(2);
+						++i;
+					}
+				}
+
+				/*int i;
+				for (i=0; i<100; i+=10) {
+					delay_ms(10);
+					sprintf(buf, "%d %x %x %x %x %x %x %x %x %x %x", i, image[i], image[i+1], image[i+2], image[i+3], image[i+4], image[i+5], image[i+6], image[i+7], image[i+8], image[i+9]);
+					uart_putline(&uart, buf);
+				}*/
+				//sprintf(buf, "%d", i);
+				//uart_putline(&uart, buf);
+				//uart_putline(&uart, "DONE");
+			} else {
+				uart_putline(&uart, "ERROR: unknown command");
+			}
+
+		}
+		++offset;
+
+	}
+	return 0;
+}
 
 
 void init_sdram(){
@@ -424,10 +519,13 @@ void set_frame_size(int width, int height){
 
 void set_test_pattern(){
 	sensor_set(0xa0, 0b00111001);	//set test pattern to monochrome vertical bars
-	sensor_set(0xa4, 5);			//set bar width to 5
+	sensor_set(0xa4, 10);			//set bar width to 16
 	sensor_set(0xa1, 500);			//set odd bar color
 	sensor_set(0xa3, 3500);			//set even bar color
 	uart_putline(&uart, "Monochrome vertical bars test pattern set");
+}
+void clear_pattern(){
+	sensor_set(0xa0, 0b00111000);	//disables pattern
 }
 
 
@@ -440,7 +538,22 @@ void set_shutter_speed(){
 void take_picture(int shutter_speed_ms){
 	//uart_putline(&uart, "Snapshot");
 
-	volatile int i=0;
+	camera_take_picture(100, 0, 0, 99, 9);
+
+	int i;
+	/*for (i=0; i<50; ++i) {
+		sprintf(buf, "%d %x", i, image[i]);
+		uart_putline(&uart, buf);
+
+	}*/
+
+	for (i=0; i<5000; i+=10) {
+		delay_ms(10);
+		sprintf(buf, "%d %x %x %x %x %x %x %x %x %x %x", i, image[i], image[i+1], image[i+2], image[i+3], image[i+4], image[i+5], image[i+6], image[i+7], image[i+8], image[i+9]);
+		uart_putline(&uart, buf);
+	}
+
+	/*volatile int i=0;
 
 	gpio_set(GPIO_TRIGGER, 0);
 
@@ -456,7 +569,7 @@ void take_picture(int shutter_speed_ms){
 			DCMI->SR &= 3;
 			if (pixcnt>=5000) {break;}
 		}
-	}
+	}*/
 
 	/*//transmit raw information
 	//start of frame
@@ -473,7 +586,7 @@ void take_picture(int shutter_speed_ms){
 
 	//transmit picture
 	//average all pixels to produce grayscale image. Output image is 4 times smaller than input. Data is ready for octave.
-	uart_putline(&uart, "++++");	//start of frame
+	/*uart_putline(&uart, "++++");	//start of frame
 	int pixel_buffer[50], j;
 	for (j=0; j<100; j+=2) {		//taking 2 lines at a time
 		for (i=0; i<50; ++i) {		//every number at a line since it holds 2 pixels already
@@ -492,7 +605,7 @@ void take_picture(int shutter_speed_ms){
 		while (uart_outbox_not_empty(&uart)) {}	//waits for previous data to be sent
 		uart_putline(&uart, buf);
 	}
-	uart_putline(&uart, "+++-");	//end of frame
+	uart_putline(&uart, "+++-");	//end of frame*/
 
 
 

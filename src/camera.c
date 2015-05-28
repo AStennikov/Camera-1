@@ -5,22 +5,60 @@
 #include "gpio.h"
 #include "uart.h"
 #include "camera.h"
+#include "i2c.h"
+#include "event_timer.h"
 
 #include <stdio.h>
 #include <string.h>
 
 //points to uart, so that we can access it in this file functions
 UART *dbg;
-
 char buf[256];
 
-//int image[2500];
+
+int chip_version = 0;
+int img_row = 0;
+int img_column = 0;
+int img_width = 0;
+int img_height = 0;
+int img_shutter_speed_ms = 0;
 
 //these statistics are printed out at the end of frame reception
 int overflow_count = 0, sync_error_count = 0, fv_count = 0, lv_count = 0;
 
 //initializes pins, clocks and controller
-void camera_init(UART *debug){
+int camera_init(UART *debug){
+	//communicate to sensor and set some default values
+	chip_version = sensor_get(0);
+
+	//ERS mode, bulb exposure
+	sensor_set(0x1e, 0x4146);
+
+	delay_ms(8000);
+
+	sensor_set(0x01, img_row);	//row start
+	sensor_set(0x02, img_column);	//column start
+	sensor_set(0x03, img_width);
+	sensor_set(0x04, img_height);
+
+	delay_ms(8000);
+
+	//disable black level correction
+	//no cmd to set Manual_BLC to 1 discovered
+	sensor_set(0x20, 0);	//set Row BLC, Show_Dark_Rows and Show_Dart_Columns to 0
+	sensor_set(0x4b, 0);	//set row black default offset to 0
+
+
+	//check if everything went ok
+	int error_check = 0;
+	if (chip_version != 0x1801) {error_check |= 1;}
+	if (sensor_get(0x1e) != 0x4146) {error_check |= 2;}
+	if (sensor_get(0x01) != img_row) {error_check |= 4;}
+	if (sensor_get(0x02) != img_column) {error_check |= 8;}
+	if (sensor_get(0x03) != img_width) {error_check |= 16;}
+	if (sensor_get(0x04) != img_height) {error_check |= 32;}
+	if (sensor_get(0x20) != 0) {error_check |= 64;}
+	if (sensor_get(0x4b) != 0) {error_check |= 128;}
 
 	dbg = debug;
 
@@ -138,7 +176,7 @@ void camera_init(UART *debug){
 	DCMI_CaptureCmd(ENABLE);
 
 
-	uart_putline(dbg, "DCMI init finished");
+	return error_check;
 }
 
 //tells dcmi controller to start frame capture
@@ -158,6 +196,78 @@ int camera_test_image_array(){
 	}
 	return 0;
 }
+
+//takes picture with given parameters. No processing is done. Raw data stored in image[] array
+int camera_take_picture(){
+	//pull down TRIGGER signal to order sensor to take picture. TRIGGER length determines shutter speed
+	volatile int i=0;
+	gpio_set(GPIO_TRIGGER, 0);
+	delay_ms(img_shutter_speed_ms);
+	gpio_set(GPIO_TRIGGER, 1);
+
+	//read data in
+	int pixcnt=0;
+	for (i=0; i<10000000; ++i) {
+		if (DCMI->SR & 4) {
+			image[pixcnt++] = DCMI->DR;
+			DCMI->SR &= 3;
+			if (pixcnt>=5000) {break;}
+		}
+	}
+
+	while (fv_count == 0) {}
+	if (fv_count != 0) {
+		sprintf(buf, "Frame captured. OVF: %d, SYNC: %d, Frames: %d, Lines: %d", overflow_count, sync_error_count, fv_count, lv_count);
+		overflow_count = 0;
+		sync_error_count = 0;
+		fv_count = 0;
+		lv_count = 0;
+		uart_putline(dbg, buf);
+
+	}
+
+	return 0;
+}
+
+//these set picture parameters
+int camera_set_row(int new_row) {
+	sensor_set(0x01, new_row);	//row start
+	img_row = new_row;
+	if (sensor_get(0x01) == new_row) {return 1;}
+	return 0;
+}
+int camera_set_column(int new_column) {
+	sensor_set(0x02, new_column);	//column start
+	img_column = new_column;
+	if (sensor_get(0x02) == new_column) {return 1;}
+	return 0;
+}
+int camera_set_width(int new_width) {
+	sensor_set(0x03, new_width);
+	img_width = new_width;
+	if (sensor_get(0x03) == new_width) {return 1;}
+	return 0;
+}
+int camera_set_height(int new_height) {
+	sensor_set(0x04, new_height);
+	img_height = new_height;
+	if (sensor_get(0x04) == new_height) {return 1;}
+	return 0;
+}
+int camera_set_shutter_speed(int new_shutter_speed) {
+	img_shutter_speed_ms = new_shutter_speed;
+	return 1;
+}
+
+//these return picture parameters
+int camera_frame_width() {return img_width;}
+int camera_frame_height() {return img_height;}
+
+
+
+
+
+
 
 void DCMI_IRQHandler() {
 	if (DCMI_GetITStatus(DCMI_IT_FRAME) == SET) {
@@ -187,12 +297,12 @@ void DCMI_IRQHandler() {
 	if (DCMI_GetITStatus(DCMI_IT_VSYNC) == SET) {
 		++fv_count;
 
-		sprintf(buf, "Frame captured. OVF: %d, SYNC: %d, Frames: %d, Lines: %d", overflow_count, sync_error_count, fv_count, lv_count);
+		/*sprintf(buf, "Frame captured. OVF: %d, SYNC: %d, Frames: %d, Lines: %d", overflow_count, sync_error_count, fv_count, lv_count);
 		overflow_count = 0;
 		sync_error_count = 0;
 		fv_count = 0;
 		lv_count = 0;
-		uart_putline(dbg, buf);
+		uart_putline(dbg, buf);*/
 
 		//uart_putline(dbg, "DCMI vsync");
 		DCMI_ClearITPendingBit(DCMI_IT_VSYNC);
