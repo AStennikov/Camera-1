@@ -17,6 +17,7 @@ int camera_test_image_array();
 int camera_clear_image_array();
 
 //these set picture parameters
+int camera_set_bin(int new_bin_value);	//binning and skipping is always set to same number
 int camera_set_row(int new_row);
 int camera_set_column(int new_column);
 int camera_set_width(int new_width);

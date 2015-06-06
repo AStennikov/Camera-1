@@ -106,7 +106,7 @@ gpio_init();
 	if (DCMI_init_status == 0) {
 		uart_putline(&uart, "DCMI init OK");
 	} else {
-		sprintf(buf, "DCMI init status: %x", DCMI_init_status);
+		sprintf(buf, "DCMI init status: 0x%x", DCMI_init_status);
 		uart_putline(&uart, buf);
 	}
 #endif
@@ -203,45 +203,34 @@ int process_command(char *cmd) {
 	while (offset < strlen(cmd)) {
 		if (cmd[offset] == '-') {	//start of command detected
 			if (strncmp(&cmd[offset+1], "row ", 4) == 0) {	//user wants to set row
+				uart_putline(&uart, "OK");
 				offset += 5;
 				argument = str_to_i(offset, cmd);
-				if (camera_set_row(argument)) {
-					uart_putline(&uart, "OK");
-					sprintf(buf, "Row set to %d", argument);
-					uart_putline(&uart, buf);
-				} else {
-					uart_putline(&uart, "ERROR: UNABLE TO SET ROW");
-				}
+				sprintf(buf, "%d", camera_set_row(argument));
+				uart_putline(&uart, buf);
 			} else if (strncmp(&cmd[offset+1], "column ", 7) == 0) {
+				uart_putline(&uart, "OK");
 				offset += 8;
 				argument = str_to_i(offset, cmd);
-				if (camera_set_column(argument)) {
-					uart_putline(&uart, "OK");
-					sprintf(buf, "Column set to %d", argument);
-					uart_putline(&uart, buf);
-				} else {
-					uart_putline(&uart, "ERROR: UNABLE TO SET COLUMN");
-				}
+				sprintf(buf, "%d", camera_set_column(argument));
+				uart_putline(&uart, buf);
 			} else if (strncmp(&cmd[offset+1], "width ", 6) == 0) {
+				uart_putline(&uart, "OK");
 				offset += 7;
 				argument = str_to_i(offset, cmd);
-				if (camera_set_width(argument)) {
-					uart_putline(&uart, "OK");
-					sprintf(buf, "Width set to %d", argument);
-					uart_putline(&uart, buf);
-				} else {
-					uart_putline(&uart, "ERROR: UNABLE TO SET WIDTH");
-				}
+				sprintf(buf, "%d", camera_set_width(argument));
+				uart_putline(&uart, buf);
 			} else if (strncmp(&cmd[offset+1], "height ", 7) == 0) {
+				uart_putline(&uart, "OK");
 				offset += 8;
 				argument = str_to_i(offset, cmd);
-				if (camera_set_height(argument)) {
-					uart_putline(&uart, "OK");
-					sprintf(buf, "Height set to %d", argument);
-					uart_putline(&uart, buf);
-				} else {
-					uart_putline(&uart, "ERROR: UNABLE TO SET HEIGHT");
-				}
+				sprintf(buf, "%d", camera_set_height(argument));
+				uart_putline(&uart, buf);
+			} else if (strncmp(&cmd[offset+1], "bin ", 4) == 0) {
+				uart_putline(&uart, "OK");
+				offset += 5;
+				argument = str_to_i(offset, cmd);
+				camera_set_bin(argument);
 			} else if (strncmp(&cmd[offset+1], "speed ", 6) == 0) {
 				offset += 7;
 				argument = str_to_i(offset, cmd);
@@ -269,7 +258,7 @@ int process_command(char *cmd) {
 				uart_putline(&uart, "Taking picture");
 				camera_take_picture();
 				uart_putline(&uart, "DONE");
-			} else if (strncmp(&cmd[offset+1], "i2cwr", 5) == 0) {	//command for writing sensor registers
+			} else if (strncmp(&cmd[offset+1], "i2cwr ", 6) == 0) {	//command for writing sensor registers
 				//syntax: -i2cwr xx yyyy, where xx is register id and yyyy is value
 				offset += 7;
 				int reg = str_to_i(offset, cmd);
@@ -278,7 +267,7 @@ int process_command(char *cmd) {
 				int value = str_to_i(offset, cmd);
 				sensor_set(reg, value);
 				uart_putline(&uart, "OK");
-			} else if (strncmp(&cmd[offset+1], "i2crd", 5) == 0) {	//command for reading sensor registers
+			} else if (strncmp(&cmd[offset+1], "i2crd ", 6) == 0) {	//command for reading sensor registers
 				//syntax: -i2crd xx, where xx is register id.
 				offset += 7;
 				int reg = str_to_i(offset, cmd);
@@ -286,11 +275,14 @@ int process_command(char *cmd) {
 				sprintf(buf, "%d", value);
 				uart_putline(&uart, buf);
 				uart_putline(&uart, "OK");
-			} else if (strncmp(&cmd[offset+1], "rshift", 6) == 0) {	//command for reading sensor registers
+			} else if (strncmp(&cmd[offset+1], "rshift ", 7) == 0) {	//command for setting right shift value
 				offset += 8;
 				int value = str_to_i(offset, cmd);
 				camera_set_rshift(value);
 				uart_putline(&uart, "OK");
+			} else if (strncmp(&cmd[offset+1], "reset", 5) == 0) {	//command for setting right shift value
+				uart_putline(&uart, "OK");
+				NVIC_SystemReset();
 			} else if (strncmp(&cmd[offset+1], "getdata", 7) == 0) {
 				int green1 = 0;
 				int green2 = 0;
@@ -312,7 +304,7 @@ int process_command(char *cmd) {
 				} else {	//ceil does not add 1
 					array_width = 2*((camera_frame_width()+1)/((skip+1)*2));
 				}
-				sprintf(buf, "%d:%d:%d", array_height/2, array_width/2, (array_height/2)*(array_width/2));
+				sprintf(buf, "%d:%d:%d", array_width/2, array_height/2, (array_height/2)*(array_width/2));
 				uart_putline(&uart, buf);
 
 				//array_height = (camera_frame_height()+1)/2;
@@ -341,7 +333,10 @@ int process_command(char *cmd) {
 					sprintf(buf, "%x,%x,%x,%x", (image[i]>>24)&0xff, (image[i]>>16)&0xff, (image[i]>>8)&0xff, (image[i]>>0)&0xff);
 					uart_putline(&uart, buf);
 				}
-
+				/*for (i=0; i<200; ++i) {
+					sprintf(buf, "%x,%x,%x,%x", (image[i]>>24)&0xff, (image[i]>>16)&0xff, (image[i]>>8)&0xff, (image[i]>>0)&0xff);
+					uart_putline(&uart, buf);
+				}*/
 
 				//working but for 1-dimensional arrays only
 				/*for (i=0; i<array_height; ++i) {

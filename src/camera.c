@@ -20,8 +20,8 @@ char buf[256];
 int chip_version = 0;
 int img_row = 0;
 int img_column = 0;
-int img_width = 1;
-int img_height = 99;
+int img_width = 99;
+int img_height = 1;
 int img_shutter_speed_ms = 100;
 int rshift = 4;	//to convert 12-bit data to 8-bit, we shift data by this amount. set to 2 to reduce faulty D[10] pin.
 
@@ -40,10 +40,10 @@ int camera_init(UART *debug){
 
 	delay_ms(8000);
 
-	sensor_set(0x01, img_row);	//row start
-	sensor_set(0x02, img_column);	//column start
-	sensor_set(0x03, img_width);
-	sensor_set(0x04, img_height);
+	camera_set_row(img_row);	//row start
+	camera_set_column(img_column);	//column start
+	camera_set_width(img_width);
+	camera_set_height(img_height);
 
 	delay_ms(8000);
 
@@ -53,9 +53,9 @@ int camera_init(UART *debug){
 	sensor_set(0x4b, 0);	//set row black default offset to 0
 
 	//set row binning and skip to 3x
-	int bin_skip = sensor_get(0x23);
-	sensor_set(0x23, bin_skip | 0b110010);
-
+	//int bin_skip = sensor_get(0x23);
+	//sensor_set(0x23, bin_skip | 0b110010);
+	camera_set_bin(3);
 
 	//check if everything went ok
 	int error_check = 0;
@@ -63,15 +63,15 @@ int camera_init(UART *debug){
 	if (sensor_get(0x1e) != 0x4146) {error_check |= 2;}
 	if (sensor_get(0x01) != img_row) {error_check |= 4;}
 	if (sensor_get(0x02) != img_column) {error_check |= 8;}
-	if (sensor_get(0x03) != img_width) {error_check |= 16;}
-	if (sensor_get(0x04) != img_height) {error_check |= 32;}
+	if (sensor_get(0x04) != img_width) {error_check |= 16;}
+	if (sensor_get(0x03) != img_height) {error_check |= 32;}
 	if (sensor_get(0x20) != 0) {error_check |= 64;}
 	if (sensor_get(0x4b) != 0) {error_check |= 128;}
-	if (sensor_get(0x23) != (bin_skip | 0b110010)) {error_check |= 256;}
+	//if (sensor_get(0x23) != (bin_skip | 0b110010)) {error_check |= 256;}
 
 	dbg = debug;
 
-	memset(image, 0, 40000*sizeof(int));
+	memset(image, 0, IMAGE_ARRAY_SIZE*sizeof(int));
 
 	//enable clocks
 	RCC_AHB2PeriphClockCmd(RCC_AHB2Periph_DCMI, ENABLE);
@@ -273,29 +273,41 @@ int camera_take_picture(){
 }
 
 //these set picture parameters
+//bin values 0, 1 and 3 are possible. Skip values are same.
+int camera_set_bin(int new_bin_value){
+	if ((new_bin_value == 0) || (new_bin_value==1) || (new_bin_value==3)) {
+		//set these values to 0
+		sensor_set(0x22, sensor_get(0x22) & 0b1111111111001000);
+		sensor_set(0x23, sensor_get(0x23) & 0b1111111111001000);
+
+		//and now set them to actual values
+		sensor_set(0x22, sensor_get(0x22) | ((new_bin_value<<4) | (new_bin_value<<0)));
+		sensor_set(0x23, sensor_get(0x23) | ((new_bin_value<<4) | (new_bin_value<<0)));
+
+	} else {
+		uart_putline(dbg, "ERROR: wrong bin value");
+	}
+	return 0;
+}
 int camera_set_row(int new_row) {
 	sensor_set(0x01, new_row);	//row start
-	img_row = new_row;
-	if (sensor_get(0x01) == new_row) {return 1;}
-	return 0;
+	img_row = sensor_get(0x01);
+	return img_row;
 }
 int camera_set_column(int new_column) {
 	sensor_set(0x02, new_column);	//column start
-	img_column = new_column;
-	if (sensor_get(0x02) == new_column) {return 1;}
-	return 0;
+	img_column = sensor_get(0x02);
+	return img_column;
 }
 int camera_set_width(int new_width) {
-	sensor_set(0x03, new_width);
-	img_width = new_width;
-	if (sensor_get(0x03) == new_width) {return 1;}
-	return 0;
+	sensor_set(0x04, new_width);	//0x04 because "Column Size" means "size in columns"
+	img_width = sensor_get(0x04);
+	return img_width;
 }
 int camera_set_height(int new_height) {
-	sensor_set(0x04, new_height);
-	img_height = new_height;
-	if (sensor_get(0x04) == new_height) {return 1;}
-	return 0;
+	sensor_set(0x03, new_height);
+	img_height = sensor_get(0x03);
+	return img_height;
 }
 int camera_set_shutter_speed(int new_shutter_speed) {
 	img_shutter_speed_ms = new_shutter_speed;
@@ -317,12 +329,6 @@ int camera_set_rshift(int new_value) {
 
 void DCMI_IRQHandler() {
 	if (DCMI_GetITStatus(DCMI_IT_FRAME) == SET) {
-		//sprintf(buf, "Frame captured. OVF: %d, SYNC: %d, Frames: %d, Lines: %d", overflow_count, sync_error_count, fv_count, lv_count);
-		//overflow_count = 0;
-		//sync_error_count = 0;
-		//fv_count = 0;
-		//lv_count = 0;
-		//uart_putline(dbg, buf);
 		DCMI_ClearITPendingBit(DCMI_IT_FRAME);
 	}
 	if (DCMI_GetITStatus(DCMI_IT_OVF) == SET) {
@@ -344,13 +350,6 @@ void DCMI_IRQHandler() {
 	if (DCMI_GetITStatus(DCMI_IT_VSYNC) == SET) {
 		++fv_count;
 		read_in_time = 0;
-		/*sprintf(buf, "Frame captured. OVF: %d, SYNC: %d, Frames: %d, Lines: %d", overflow_count, sync_error_count, fv_count, lv_count);
-		overflow_count = 0;
-		sync_error_count = 0;
-		fv_count = 0;
-		lv_count = 0;
-		uart_putline(dbg, buf);*/
-
 		//uart_putline(dbg, "DCMI vsync");
 		DCMI_ClearITPendingBit(DCMI_IT_VSYNC);
 	}
