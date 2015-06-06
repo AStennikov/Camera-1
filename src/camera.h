@@ -1,8 +1,8 @@
 #ifndef CAMERA_H_
 #define CAMERA_H_
 
-
-int image[5000];
+#define IMAGE_ARRAY_SIZE 40000
+int image[IMAGE_ARRAY_SIZE];
 
 //initializes pins, clocks and controller
 int camera_init(UART *debug);
@@ -12,6 +12,9 @@ void camera_capture_frame();
 
 //returns 1 if image array has at least 1 non-0 element;
 int camera_test_image_array();
+
+//sets all values to 0
+int camera_clear_image_array();
 
 //these set picture parameters
 int camera_set_row(int new_row);
@@ -27,5 +30,7 @@ int camera_frame_height();
 //takes picture. Parameters must be configured before calling this function. No processing is done. Raw data stored in image[] array
 int camera_take_picture();
 
+//to convert from 12-bit to 8-bit, we right shift data by new_value number of bits.
+int camera_set_rshift(int new_value);
 
 #endif

@@ -14,14 +14,18 @@
 //points to uart, so that we can access it in this file functions
 UART *dbg;
 char buf[256];
+//char buffer[2752];
 
 
 int chip_version = 0;
 int img_row = 0;
 int img_column = 0;
-int img_width = 0;
-int img_height = 0;
-int img_shutter_speed_ms = 0;
+int img_width = 1;
+int img_height = 99;
+int img_shutter_speed_ms = 100;
+int rshift = 4;	//to convert 12-bit data to 8-bit, we shift data by this amount. set to 2 to reduce faulty D[10] pin.
+
+int line_even_odd = 0;	//0 indicates even line, 1 - odd. Value is changed in LINE RECEIVED interrupt. Reset at start of frame capture.
 
 //these statistics are printed out at the end of frame reception
 int overflow_count = 0, sync_error_count = 0, fv_count = 0, lv_count = 0;
@@ -48,6 +52,10 @@ int camera_init(UART *debug){
 	sensor_set(0x20, 0);	//set Row BLC, Show_Dark_Rows and Show_Dart_Columns to 0
 	sensor_set(0x4b, 0);	//set row black default offset to 0
 
+	//set row binning and skip to 3x
+	int bin_skip = sensor_get(0x23);
+	sensor_set(0x23, bin_skip | 0b110010);
+
 
 	//check if everything went ok
 	int error_check = 0;
@@ -59,10 +67,11 @@ int camera_init(UART *debug){
 	if (sensor_get(0x04) != img_height) {error_check |= 32;}
 	if (sensor_get(0x20) != 0) {error_check |= 64;}
 	if (sensor_get(0x4b) != 0) {error_check |= 128;}
+	if (sensor_get(0x23) != (bin_skip | 0b110010)) {error_check |= 256;}
 
 	dbg = debug;
 
-	memset(image, 0, 5000*sizeof(int));
+	memset(image, 0, 40000*sizeof(int));
 
 	//enable clocks
 	RCC_AHB2PeriphClockCmd(RCC_AHB2Periph_DCMI, ENABLE);
@@ -187,9 +196,9 @@ void camera_capture_frame(){
 
 
 //returns 1 if image array has at least 1 non-0 element;
-int camera_test_image_array(){
+int camera_test_image_array() {
 	int i;
-	for (i=0; i<5000; ++i){
+	for (i=0; i<IMAGE_ARRAY_SIZE; ++i) {
 		if (image[i] != 0) {
 			return 1;
 		}
@@ -197,8 +206,25 @@ int camera_test_image_array(){
 	return 0;
 }
 
+//sets all values to 0
+int camera_clear_image_array(){
+	memset(image, 0, IMAGE_ARRAY_SIZE*sizeof(int));
+	return 0;
+}
+
 //takes picture with given parameters. No processing is done. Raw data stored in image[] array
+//int overflow = 40000;	//protects from array overflow.
+int read_in_time = 100000000;	//Set to 0 when FRAME_VALID received to quit loop
 int camera_take_picture(){
+	camera_capture_frame();
+
+	camera_clear_image_array();
+	line_even_odd = 0;
+
+	read_in_time = 100000000;
+
+	//DCMI->SR &= 3;
+
 	//pull down TRIGGER signal to order sensor to take picture. TRIGGER length determines shutter speed
 	volatile int i=0;
 	gpio_set(GPIO_TRIGGER, 0);
@@ -206,12 +232,30 @@ int camera_take_picture(){
 	gpio_set(GPIO_TRIGGER, 1);
 
 	//read data in
-	int pixcnt=0;
-	for (i=0; i<10000000; ++i) {
-		if (DCMI->SR & 4) {
+
+	//small hash tables here
+	//for counting position in image array
+	int image_counter[2];
+	image_counter[0] = 0;	//counts position for even lines
+	image_counter[1] = 0;	//counts position for odd lines
+	//hash table for shifting
+	int shift[2];
+	shift[0] = 8;	//even lines are shifted 8 bits left
+	shift[1] = 0;	//odd lines are shifted 0 bits left
+
+
+	for (i=0; i<read_in_time; ++i) {
+		//original uncompressed algorithm
+		/*if (DCMI->SR & 4) {
 			image[pixcnt++] = DCMI->DR;
 			DCMI->SR &= 3;
-			if (pixcnt>=5000) {break;}
+			if (pixcnt>=40000) {break;}
+		}*/
+
+		if (DCMI->SR & 4) {
+			image[image_counter[line_even_odd]++] |= ((DCMI->DR>>rshift)&0x00ff00ff) << shift[line_even_odd];	//saves data in appropriate location in image array
+			DCMI->SR &= 3;	//tells DCMI that data has been read
+			if (image_counter[line_even_odd]>=IMAGE_ARRAY_SIZE) {break;}
 		}
 	}
 
@@ -223,7 +267,6 @@ int camera_take_picture(){
 		fv_count = 0;
 		lv_count = 0;
 		uart_putline(dbg, buf);
-
 	}
 
 	return 0;
@@ -263,7 +306,10 @@ int camera_set_shutter_speed(int new_shutter_speed) {
 int camera_frame_width() {return img_width;}
 int camera_frame_height() {return img_height;}
 
-
+//to convert from 12-bit to 8-bit, we right shift data by new_value number of bits.
+int camera_set_rshift(int new_value) {
+	rshift = new_value;
+}
 
 
 
@@ -291,12 +337,13 @@ void DCMI_IRQHandler() {
 	}
 	if (DCMI_GetITStatus(DCMI_IT_LINE) == SET) {
 		++lv_count;
+		line_even_odd = lv_count % 2;	//set current line indicator, even or odd
 		//uart_putline(dbg, "DCMI line");
 		DCMI_ClearITPendingBit(DCMI_IT_LINE);
 	}
 	if (DCMI_GetITStatus(DCMI_IT_VSYNC) == SET) {
 		++fv_count;
-
+		read_in_time = 0;
 		/*sprintf(buf, "Frame captured. OVF: %d, SYNC: %d, Frames: %d, Lines: %d", overflow_count, sync_error_count, fv_count, lv_count);
 		overflow_count = 0;
 		sync_error_count = 0;

@@ -29,6 +29,9 @@ void set_frame_size(int width, int height);
 
 //these set and clear test patterns
 void set_test_pattern();
+void test_pattern_red();
+void test_pattern_green();
+void test_pattern_blue();
 void clear_pattern();
 
 void set_shutter_speed();
@@ -54,7 +57,8 @@ UART uart;
 int main(void)
 {
 
-	gpio_init();
+
+gpio_init();
 	gpio_set(GPIO_TRIGGER, 1);
 
 	event_timer_init();
@@ -95,6 +99,8 @@ int main(void)
 
 	i2c_init();
 
+	delay_ms(8000);
+
 	int DCMI_init_status = camera_init(&uart);
 #ifdef DEBUG
 	if (DCMI_init_status == 0) {
@@ -108,6 +114,7 @@ int main(void)
 	int msg_counter = 0;
 
 	//set_test_pattern();
+	//test_pattern_blue();
 
 	while (1)
 	{
@@ -140,8 +147,8 @@ int main(void)
 				uart_putline(&uart, "HELP");
 				uart_putline(&uart, "Commands are entered by typing command and pressing enter");
 				uart_putline(&uart, "Press 'h' to get help");
-				uart_putline(&uart, "Type 'start' to get 'OK' responce");
-				uart_putline(&uart, "Typing any other command will cause error responce");
+				uart_putline(&uart, "Type 'start' to get 'OK' response");
+				uart_putline(&uart, "Typing any other command will cause error response");
 			} else if (strcmp(msg, "p") == 0) {
 				take_picture(100);
 
@@ -246,6 +253,15 @@ int process_command(char *cmd) {
 			} else if (strncmp(&cmd[offset+1], "barpattern", 10) == 0) {
 				set_test_pattern();
 				uart_putline(&uart, "Bar pattern set");
+			} else if (strncmp(&cmd[offset+1], "redpattern", 10) == 0) {
+				test_pattern_red();
+				uart_putline(&uart, "Red pattern set");
+			} else if (strncmp(&cmd[offset+1], "greenpattern", 12) == 0) {
+				test_pattern_green();
+				uart_putline(&uart, "Green pattern set");
+			} else if (strncmp(&cmd[offset+1], "bluepattern", 11) == 0) {
+				test_pattern_blue();
+				uart_putline(&uart, "Blue pattern set");
 			} else if (strncmp(&cmd[offset+1], "nopattern", 9) == 0) {
 				clear_pattern();
 				uart_putline(&uart, "Pattern cleared");
@@ -253,22 +269,113 @@ int process_command(char *cmd) {
 				uart_putline(&uart, "Taking picture");
 				camera_take_picture();
 				uart_putline(&uart, "DONE");
+			} else if (strncmp(&cmd[offset+1], "i2cwr", 5) == 0) {	//command for writing sensor registers
+				//syntax: -i2cwr xx yyyy, where xx is register id and yyyy is value
+				offset += 7;
+				int reg = str_to_i(offset, cmd);
+				while ((cmd[offset] != ' ') && (offset<strlen(cmd))) { ++offset;}	//scan to next space
+				++offset;	//skip space
+				int value = str_to_i(offset, cmd);
+				sensor_set(reg, value);
+				uart_putline(&uart, "OK");
+			} else if (strncmp(&cmd[offset+1], "i2crd", 5) == 0) {	//command for reading sensor registers
+				//syntax: -i2crd xx, where xx is register id.
+				offset += 7;
+				int reg = str_to_i(offset, cmd);
+				int value = sensor_get(reg);
+				sprintf(buf, "%d", value);
+				uart_putline(&uart, buf);
+				uart_putline(&uart, "OK");
+			} else if (strncmp(&cmd[offset+1], "rshift", 6) == 0) {	//command for reading sensor registers
+				offset += 8;
+				int value = str_to_i(offset, cmd);
+				camera_set_rshift(value);
+				uart_putline(&uart, "OK");
 			} else if (strncmp(&cmd[offset+1], "getdata", 7) == 0) {
+				int green1 = 0;
+				int green2 = 0;
+				int red = 0;
+				int blue = 0;
+
+				int array_height = 0;
+				int array_width = 0;
+
+				//size of output image depends on skipping settings
+				int skip = 3;
+				if ((camera_frame_height()+1)%((skip+1)*2) > 0 ) {	//ceil adds 1
+					array_height = 2*((camera_frame_height()+1)/((skip+1)*2) + 1);
+				} else {	//ceil does not add 1
+					array_height = 2*((camera_frame_height()+1)/((skip+1)*2));
+				}
+				if ((camera_frame_width()+1)%((skip+1)*2) > 0 ) {	//ceil adds 1
+					array_width = 2*((camera_frame_width()+1)/((skip+1)*2) + 1);
+				} else {	//ceil does not add 1
+					array_width = 2*((camera_frame_width()+1)/((skip+1)*2));
+				}
+				sprintf(buf, "%d:%d:%d", array_height/2, array_width/2, (array_height/2)*(array_width/2));
+				uart_putline(&uart, buf);
+
+				//array_height = (camera_frame_height()+1)/2;
+				array_height = array_height/2;
+				//j<(camera_frame_width()+1)
+				int i, j;
+				/*for (j=0; j<array_width; j+=2) {
+					for (i=0; i<array_height; ++i) {
+						//not including 2 upper bits when masking because DCMI_D10 is always on. Reason unknown.
+						green1 = image[array_height*j+i] & 0x000003ff;
+						red = (image[array_height*j+i]>>16) & 0x000003ff;
+
+						blue = image[array_height*j+array_height+i] & 0x000003ff;
+						green2 = (image[array_height*j+array_height+i]>>16) & 0x000003ff;
+
+						sprintf(buf, "%d %d %x %x %x   %d %d %x %x %x", i, array_height*j, image[array_height*j+i], red, green1, i+array_height, array_height*j, image[array_height*j+i+array_height], green2, blue);
+						uart_putline(&uart, buf);
+						sprintf(buf, "%x,%x,%x", red>>2, (green1+green2)>>3, blue>>2);
+						uart_putline(&uart, buf);
+
+						delay_ms(1);
+					}
+				}*/
+
+				for (i=0; i<(array_height)*(array_width/2); ++i) {
+					sprintf(buf, "%x,%x,%x,%x", (image[i]>>24)&0xff, (image[i]>>16)&0xff, (image[i]>>8)&0xff, (image[i]>>0)&0xff);
+					uart_putline(&uart, buf);
+				}
+
+
+				//working but for 1-dimensional arrays only
+				/*for (i=0; i<array_height; ++i) {
+					//not including 2 upper bits when masking because DCMI_D10 is always on. Reason unknown.
+					green1 = image[i] & 0x000003ff;
+					red = (image[i]>>16) & 0x000003ff;
+
+					blue = image[array_height+i] & 0x000003ff;
+					green2 = (image[array_height+i]>>16) & 0x000003ff;
+
+					//sprintf(buf, "%d %x %x %x   %d %x %x %x", i, image[i], red, green1, i+array_height, image[i+array_height], green2, blue);
+					//uart_putline(&uart, buf);
+					sprintf(buf, "%x,%x,%x", red>>2, (green1+green2)>>3, blue>>2);
+					uart_putline(&uart, buf);
+
+					delay_ms(1);
+				}*/
+
+				/*for (i=array_height; i<array_height*2; ++i) {
+					data1 = image[i] & 0x0000ffff;
+					data2 = (image[i]>>16) & 0x0000ffff;
+
+					sprintf(buf, "%d %x", i, (data1+data2)>>5);
+					uart_putline(&uart, buf);
+					delay_ms(1);
+					//++i;
+				}*/
 
 				//get rggb values for every pixel.
-				int column = 0, row = 0;
+				/*int column = 0, row = 0;
 				int array_width = (camera_frame_width()+1)/2;	//indicates how much array elements are in one line (since 2 pixels got into 1 integer)
 				int array_height = camera_frame_height();		//indicates how many lines we have.
 				int red = 0, green1 = 0, green2 = 0, blue = 0;	//these stor pixel values
 
-				/*sprintf(buf, "width: %d", camera_frame_width());
-				uart_putline(&uart, buf);
-				sprintf(buf, "height: %d", camera_frame_height());
-				uart_putline(&uart, buf);
-				sprintf(buf, "array_width: %d", array_width);
-				uart_putline(&uart, buf);
-				sprintf(buf, "array_height: %d", array_height);
-				uart_putline(&uart, buf);*/
 				int i=0;
 				for (row=0; row<array_height; row+=2) {		//scan every second row
 					for (column=0; column<array_width; ++column) {	//scan every array element in row
@@ -284,12 +391,12 @@ int process_command(char *cmd) {
 
 						//compose frame and transmit
 						//sprintf(buf, "r:%d c:%d data1:%x r:%d c:%d data2:%x %x,%x,%x,%x;", row, column, image[row*array_width + column], row+1, column, image[(row+1)*array_width + column], red, green1, green2, blue);
-						sprintf(buf, "%d,%d,%d,%d;", red, green1, green2, blue);
+						sprintf(buf, "%x,%x,%x", red>>4, (green1+green2)>>5, blue>>4);
 						uart_putline(&uart, buf);
-						delay_ms(2);
+						delay_ms(1);
 						++i;
 					}
-				}
+				}*/
 
 				/*int i;
 				for (i=0; i<100; i+=10) {
@@ -519,10 +626,28 @@ void set_frame_size(int width, int height){
 
 void set_test_pattern(){
 	sensor_set(0xa0, 0b00111001);	//set test pattern to monochrome vertical bars
-	sensor_set(0xa4, 10);			//set bar width to 16
-	sensor_set(0xa1, 500);			//set odd bar color
-	sensor_set(0xa3, 3500);			//set even bar color
+	sensor_set(0xa4, 16);			//set bar width to 16
+	sensor_set(0xa1, 0x11);			//set odd bar color
+	sensor_set(0xa3, 0x0ff);		//set even bar color
 	uart_putline(&uart, "Monochrome vertical bars test pattern set");
+}
+void test_pattern_red(){
+	sensor_set(0xa0, 0b00000001);	//set test pattern to monochrome vertical bars
+	sensor_set(0xa1, 0);	//green
+	sensor_set(0xa2, 4095);	//red
+	sensor_set(0xa3, 0);	//blue
+}
+void test_pattern_green() {
+	sensor_set(0xa0, 0b00000001);	//set test pattern to monochrome vertical bars
+	sensor_set(0xa1, 4095);	//green
+	sensor_set(0xa2, 0);	//red
+	sensor_set(0xa3, 0);	//blue
+}
+void test_pattern_blue(){
+	sensor_set(0xa0, 0b00000001);	//set test pattern to monochrome vertical bars
+	sensor_set(0xa1, 0);	//green
+	sensor_set(0xa2, 0);	//red
+	sensor_set(0xa3, 4095);	//blue
 }
 void clear_pattern(){
 	sensor_set(0xa0, 0b00111000);	//disables pattern
