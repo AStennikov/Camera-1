@@ -115,8 +115,8 @@ void UART_putstr(UART *peripheral, char *str);
 //Returns number of strings awaiting reception
 int uart_inbox_count(UART *peripheral);
 
-//returns 1 if outbox has something
-int uart_outbox_not_empty(UART *peripheral);
+//returns number of messages in outbox
+int uart_outbox_count(UART *peripheral);
 
 //Receives one byte. If queue is empty, returns 0.
 //char UART_receive(UART *peripheral);

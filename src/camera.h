@@ -27,6 +27,7 @@ int camera_set_shutter_speed(int new_shutter_speed);
 //these return picture parameters
 int camera_frame_width();
 int camera_frame_height();
+int camera_bin();
 
 //takes picture. Parameters must be configured before calling this function. No processing is done. Raw data stored in image[] array
 int camera_take_picture();

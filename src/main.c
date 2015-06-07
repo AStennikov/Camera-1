@@ -58,7 +58,7 @@ int main(void)
 {
 
 
-gpio_init();
+	gpio_init();
 	gpio_set(GPIO_TRIGGER, 1);
 
 	event_timer_init();
@@ -76,7 +76,7 @@ gpio_init();
 
 	uart_putline(&uart, "\r\n---------------------------------------------------------");
 	uart_putline(&uart, "Welcome to Camera 1. Press 'h' and hit 'Enter' for help.");
-
+	//bin = 3
 
 	RCC_ClocksTypeDef RCC_Clocks;
 	RCC_GetClocksFreq(&RCC_Clocks);
@@ -284,16 +284,16 @@ int process_command(char *cmd) {
 				uart_putline(&uart, "OK");
 				NVIC_SystemReset();
 			} else if (strncmp(&cmd[offset+1], "getdata", 7) == 0) {
-				int green1 = 0;
-				int green2 = 0;
-				int red = 0;
-				int blue = 0;
+				//int green1 = 0;
+				//int green2 = 0;
+				//int red = 0;
+				//int blue = 0;
 
 				int array_height = 0;
 				int array_width = 0;
 
 				//size of output image depends on skipping settings
-				int skip = 3;
+				int skip = camera_bin();
 				if ((camera_frame_height()+1)%((skip+1)*2) > 0 ) {	//ceil adds 1
 					array_height = 2*((camera_frame_height()+1)/((skip+1)*2) + 1);
 				} else {	//ceil does not add 1
@@ -304,13 +304,14 @@ int process_command(char *cmd) {
 				} else {	//ceil does not add 1
 					array_width = 2*((camera_frame_width()+1)/((skip+1)*2));
 				}
+				//divide by 2 here because we compress 4 pixels into 1
 				sprintf(buf, "%d:%d:%d", array_width/2, array_height/2, (array_height/2)*(array_width/2));
 				uart_putline(&uart, buf);
 
 				//array_height = (camera_frame_height()+1)/2;
-				array_height = array_height/2;
+				//array_height = array_height/2;
 				//j<(camera_frame_width()+1)
-				int i, j;
+				//int i, j;
 				/*for (j=0; j<array_width; j+=2) {
 					for (i=0; i<array_height; ++i) {
 						//not including 2 upper bits when masking because DCMI_D10 is always on. Reason unknown.
@@ -329,9 +330,17 @@ int process_command(char *cmd) {
 					}
 				}*/
 
-				for (i=0; i<(array_height)*(array_width/2); ++i) {
+				int i;
+				for (i=0; i<(array_height/2)*(array_width/2); ++i) {
 					sprintf(buf, "%x,%x,%x,%x", (image[i]>>24)&0xff, (image[i]>>16)&0xff, (image[i]>>8)&0xff, (image[i]>>0)&0xff);
 					uart_putline(&uart, buf);
+					//delay_ms(1);
+
+					if (i%3 == 0) {
+						delay_ms(1);
+					}
+					//waits while outbox has something
+					//while (uart_outbox_count(&uart)>5) {}
 				}
 				/*for (i=0; i<200; ++i) {
 					sprintf(buf, "%x,%x,%x,%x", (image[i]>>24)&0xff, (image[i]>>16)&0xff, (image[i]>>8)&0xff, (image[i]>>0)&0xff);

@@ -20,10 +20,11 @@ char buf[256];
 int chip_version = 0;
 int img_row = 0;
 int img_column = 0;
-int img_width = 99;
+int img_width = 1999;
 int img_height = 1;
 int img_shutter_speed_ms = 100;
 int rshift = 4;	//to convert 12-bit data to 8-bit, we shift data by this amount. set to 2 to reduce faulty D[10] pin.
+int img_bin = 0;
 
 int line_even_odd = 0;	//0 indicates even line, 1 - odd. Value is changed in LINE RECEIVED interrupt. Reset at start of frame capture.
 
@@ -55,7 +56,7 @@ int camera_init(UART *debug){
 	//set row binning and skip to 3x
 	//int bin_skip = sensor_get(0x23);
 	//sensor_set(0x23, bin_skip | 0b110010);
-	camera_set_bin(3);
+	camera_set_bin(img_bin);
 
 	//check if everything went ok
 	int error_check = 0;
@@ -283,6 +284,7 @@ int camera_set_bin(int new_bin_value){
 		//and now set them to actual values
 		sensor_set(0x22, sensor_get(0x22) | ((new_bin_value<<4) | (new_bin_value<<0)));
 		sensor_set(0x23, sensor_get(0x23) | ((new_bin_value<<4) | (new_bin_value<<0)));
+		img_bin = new_bin_value;
 
 	} else {
 		uart_putline(dbg, "ERROR: wrong bin value");
@@ -317,10 +319,12 @@ int camera_set_shutter_speed(int new_shutter_speed) {
 //these return picture parameters
 int camera_frame_width() {return img_width;}
 int camera_frame_height() {return img_height;}
+int camera_bin() {return img_bin;}
 
 //to convert from 12-bit to 8-bit, we right shift data by new_value number of bits.
 int camera_set_rshift(int new_value) {
 	rshift = new_value;
+	return 0;
 }
 
 

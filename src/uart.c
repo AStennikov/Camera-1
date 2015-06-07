@@ -677,12 +677,9 @@ void uart_getstr(UART *peripheral, char *str){
 	}*/
 }
 
-//returns 1 if outbox has something
-int uart_outbox_not_empty(UART *peripheral){
-	if (peripheral->outbox.length > 0) {
-		return 1;
-	}
-	return 0;
+//returns number of messages in outbox
+int uart_outbox_count(UART *peripheral){
+	return peripheral->outbox.length;
 }
 
 //processes byte received by hardware
